@@ -9,7 +9,10 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMotionUsageDescription": "Elcano uses motion activity to count your steps and log bike or walk workouts."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +22,11 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.anonymous.Elcano_App",
+      "permissions": [
+        "ACTIVITY_RECOGNITION"
+      ]
     },
     "web": {
       "output": "static",
@@ -38,11 +45,18 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      "expo-notifications"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "60e8be86-f63b-4fd6-822a-ed3ad99c9270"
+      }
     }
   }
 }

@@ -26,6 +26,15 @@ export default function TabLayout() {
         }}
       />
 
+      {/* Tab 3: Achievements */}
+      <Tabs.Screen
+        name="achievements"
+        options={{
+          title: 'Achievements',
+          tabBarIcon: ({ color }) => <Ionicons name="ribbon-outline" size={24} color={color} />,
+        }}
+      />
+
       {/* Tab 3: Main / Dashboard (Middle) */}
       <Tabs.Screen
         name="index"
@@ -41,6 +50,15 @@ export default function TabLayout() {
         options={{
           title: 'Profile',
           tabBarIcon: ({ color }) => <Ionicons name="person-outline" size={24} color={color} />,
+        }}
+      />
+
+      {/* Tab 5: Live Step Tracker */}
+      <Tabs.Screen
+        name="tracker"
+        options={{
+          title: 'Tracker',
+          tabBarIcon: ({ color }) => <Ionicons name="pulse-outline" size={24} color={color} />,
         }}
       />
     </Tabs>
