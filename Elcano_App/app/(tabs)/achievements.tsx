@@ -1,13 +1,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { subscribeToActiveChallenges, subscribeToUserAchievements } from '../../services/challenges';
+import {
+  ChallengeDefinition,
+  EarnedAchievement,
+  subscribeToActiveChallenges,
+  subscribeToUserAchievements,
+} from '../../services/challenges';
 import { auth, db } from '../../firebaseConfig';
-import { Timestamp, doc, onSnapshot, runTransaction } from 'firebase/firestore';
+import { Timestamp, collection, limit, onSnapshot, orderBy, query } from 'firebase/firestore';
+import AppScreen from '../../components/AppScreen';
 
-const shuffle = (items) => [...items].sort(() => Math.random() - 0.5);
+const shuffle = <T,>(items: T[]): T[] => [...items].sort(() => Math.random() - 0.5);
 
-const demoChallenges = [
+const demoChallenges: ChallengeDefinition[] = [
   {
     id: 'demo-commuter',
     title: 'Commuter Champion',
@@ -34,34 +40,57 @@ const demoChallenges = [
   },
 ];
 
-const demoEarnedAchievements = [];
+const demoEarnedAchievements: EarnedAchievement[] = [
+  {
+    id: 'demo-commuter-earned',
+    badgeId: 'Commuter',
+    challengeId: 'demo-commuter',
+    awardedAt: Timestamp.fromDate(new Date(Date.now() - 1000 * 60 * 60 * 6)),
+    coinsAwarded: 10,
+  },
+  {
+    id: 'demo-weekend-earned',
+    badgeId: 'Weekend Warrior',
+    challengeId: 'demo-weekend',
+    awardedAt: Timestamp.fromDate(new Date(Date.now() - 1000 * 60 * 60 * 24)),
+    coinsAwarded: 20,
+  },
+];
 
-const getDateKey = (value) => {
+interface ActivityWithDate {
+  steps: number;
+}
+
+const getDateKey = (value?: Timestamp | string): string => {
   if (!value) {
     return '';
   }
 
   if (typeof value === 'string') {
-    return value.split('T')[0] ?? '';
+    return value.split('T')[0] ?? value;
   }
 
-  if (value instanceof Timestamp) {
-    return value.toDate().toISOString().split('T')[0];
-  }
-
-  return '';
+  return value.toDate().toISOString().split('T')[0];
 };
 
 const todayKey = new Date().toISOString().split('T')[0];
 
-const Badge = ({ label }) => (
+const Badge = ({ label }: { label: string }) => (
   <View style={styles.badge}>
     <Ionicons name="ribbon-outline" size={16} color="#fff" />
     <Text style={styles.badgeText}>{label}</Text>
   </View>
 );
 
-const ChallengeCard = ({ challenge, earned, todaySteps }) => {
+const ChallengeCard = ({
+  challenge,
+  earned,
+  todaySteps,
+}: {
+  challenge: ChallengeDefinition;
+  earned: boolean;
+  todaySteps: number;
+}) => {
   const progress = useMemo(() => {
     if (challenge.rule.type === 'daily_steps') {
       return Math.min(1, todaySteps / Math.max(1, challenge.rule.target));
@@ -86,7 +115,7 @@ const ChallengeCard = ({ challenge, earned, todaySteps }) => {
 
       {challenge.rule.type === 'daily_steps' && (
         <Text style={styles.caption}>
-          Goal: {challenge.rule.target.toLocaleString()} steps · Today: {todaySteps?.toLocaleString?.() ?? '—'}
+          Goal: {challenge.rule.target.toLocaleString()} steps · Today: {todaySteps.toLocaleString()}
         </Text>
       )}
 
@@ -109,9 +138,9 @@ const ChallengeCard = ({ challenge, earned, todaySteps }) => {
 };
 
 export default function AchievementsScreen() {
-  const [challenges, setChallenges] = useState([]);
-  const [achievements, setAchievements] = useState([]);
-  const [todaySteps, setTodaySteps] = useState(null);
+  const [challenges, setChallenges] = useState<ChallengeDefinition[]>([]);
+  const [achievements, setAchievements] = useState<EarnedAchievement[]>([]);
+  const [todaySteps, setTodaySteps] = useState<number>(0);
   const hasLiveChallenges = challenges.length > 0;
   const visibleChallenges = useMemo(
     () => (hasLiveChallenges ? challenges : shuffle(demoChallenges)),
@@ -132,21 +161,26 @@ export default function AchievementsScreen() {
     const unsubscribeChallenges = subscribeToActiveChallenges(setChallenges);
     const unsubscribeAchievements = subscribeToUserAchievements(user.uid, setAchievements);
 
-    const todayRef = doc(db, 'dailySteps', user.uid, 'entries', todayKey);
-    const unsubscribeTodaySteps = onSnapshot(todayRef, (snapshot) => {
-      if (!snapshot.exists()) {
-        setTodaySteps(null);
+    const todayActivitiesQuery = query(
+      collection(db, 'users', user.uid, 'activities'),
+      orderBy('date', 'desc'),
+      limit(5),
+    );
+
+    const unsubscribeTodayActivity = onSnapshot(todayActivitiesQuery, (snapshot) => {
+      if (snapshot.empty) {
+        setTodaySteps(0);
         return;
       }
 
-      const data = snapshot.data();
-      setTodaySteps(typeof data.steps === 'number' ? data.steps : 0);
+      const todaysEntry = snapshot.docs.find((docSnapshot) => getDateKey(docSnapshot.data().date) === todayKey);
+      setTodaySteps((todaysEntry?.data() as ActivityWithDate)?.steps ?? 0);
     });
 
     return () => {
       unsubscribeChallenges();
       unsubscribeAchievements();
-      unsubscribeTodaySteps();
+      unsubscribeTodayActivity();
     };
   }, []);
 
@@ -155,59 +189,8 @@ export default function AchievementsScreen() {
     [visibleAchievements],
   );
 
-  useEffect(() => {
-    const user = auth.currentUser;
-
-    if (!user || achievements.length === 0) {
-      return;
-    }
-
-    const userRef = doc(db, 'users', user.uid);
-
-    const creditCoins = async () => {
-      await runTransaction(db, async (transaction) => {
-        const snapshot = await transaction.get(userRef);
-        const rewarded = new Set(snapshot.exists() && Array.isArray(snapshot.data().rewardedAchievements)
-          ? snapshot.data().rewardedAchievements
-          : []);
-
-        let coinsToAdd = 0;
-        const newRewards = [];
-
-        achievements.forEach((achievement) => {
-          if (rewarded.has(achievement.id)) {
-            return;
-          }
-
-          coinsToAdd += achievement.coinsAwarded ?? 0;
-          rewarded.add(achievement.id);
-          newRewards.push(achievement.id);
-        });
-
-        if (coinsToAdd === 0 && newRewards.length === 0) {
-          return;
-        }
-
-        const currentCoins = snapshot.exists() && typeof snapshot.data().coins === 'number'
-          ? snapshot.data().coins
-          : 0;
-
-        transaction.set(
-          userRef,
-          {
-            coins: currentCoins + coinsToAdd,
-            rewardedAchievements: Array.from(rewarded),
-          },
-          { merge: true },
-        );
-      });
-    };
-
-    creditCoins();
-  }, [achievements]);
-
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <AppScreen scrollable contentStyle={styles.content}>
       <View style={styles.header}>
         <Text style={styles.title}>Achievements</Text>
         <Text style={styles.subtitle}>Complete challenges to earn badges and bonus coins.</Text>
@@ -230,7 +213,7 @@ export default function AchievementsScreen() {
                 key={challenge.id}
                 challenge={challenge}
                 earned={earnedBadges.has(challenge.reward.badgeId)}
-                todaySteps={todaySteps ?? 0}
+                todaySteps={todaySteps}
               />
             ))}
           </View>
@@ -261,13 +244,12 @@ export default function AchievementsScreen() {
             ))}
         </View>
       )}
-    </ScrollView>
+    </AppScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F7F7F7' },
-  content: { padding: 20, paddingBottom: 40 },
+  content: { paddingBottom: 40 },
   header: { marginBottom: 16 },
   title: { fontSize: 28, fontWeight: '700', color: '#1F1F1F' },
   subtitle: { color: '#6B6B6B', marginTop: 4 },
@@ -277,45 +259,85 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 16,
     padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#eee',
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+    gap: 10,
   },
-  challengeCardEarned: { borderColor: '#C8E6C9', backgroundColor: '#F1F8E9' },
-  challengeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  challengeCardEarned: {
+    borderWidth: 1,
+    borderColor: '#2E7D3220',
+    backgroundColor: '#F1F8F4',
+  },
+  challengeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   challengeTitle: { fontSize: 18, fontWeight: '700', color: '#1F1F1F' },
-  description: { color: '#555', marginBottom: 8 },
-  caption: { color: '#777', fontSize: 12, marginBottom: 8 },
+  description: { color: '#555' },
+  caption: { color: '#7A7A7A', fontSize: 12 },
+  progressBar: {
+    height: 8,
+    width: '100%',
+    backgroundColor: '#EFEFEF',
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#FF8C00',
+  },
+  metaRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  metaText: { color: '#444', fontWeight: '600' },
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FF8C00',
+    gap: 6,
+    backgroundColor: '#6C63FF',
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 20,
+    borderRadius: 12,
   },
-  badgeText: { color: '#fff', marginLeft: 6, fontWeight: '700' },
-  progressBar: {
-    width: '100%',
-    height: 6,
-    backgroundColor: '#eee',
-    borderRadius: 3,
-    overflow: 'hidden',
-    marginBottom: 10,
+  badgeText: { color: '#fff', fontWeight: '700' },
+  emptyState: {
+    marginTop: 20,
+    padding: 20,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    alignItems: 'center',
+    gap: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.03,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
   },
-  progressFill: { height: '100%', backgroundColor: '#FF8C00' },
-  metaRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  metaText: { color: '#555' },
-  section: { marginTop: 16 },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: '#1F1F1F' },
+  emptyCopy: { color: '#666', textAlign: 'center' },
+  section: {
+    marginTop: 20,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 14,
+    gap: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.03,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   sectionTitle: { fontSize: 18, fontWeight: '700', color: '#1F1F1F' },
-  achievementRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
-  achievementBadge: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#FF8C00', alignItems: 'center', justifyContent: 'center' },
+  achievementRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  achievementBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FF8C00',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   achievementTitle: { fontWeight: '700', color: '#1F1F1F' },
   achievementMeta: { color: '#666', fontSize: 12 },
-  emptyState: { alignItems: 'center', gap: 8, padding: 24 },
-  emptyTitle: { fontWeight: '700', color: '#333', fontSize: 18 },
-  emptyCopy: { color: '#666', textAlign: 'center' },
 });

@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
-import { Alert, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import useLiveStepTracker from '../../hooks/useLiveStepTracker';
-import { finalizeStepSession } from '../../services/stepTracking';
-import { auth } from '../../firebaseConfig';
+import AppScreen from '../../components/AppScreen';
 
 export default function StepTrackerScreen() {
   const [finalizedSteps, setFinalizedSteps] = useState(null);
@@ -16,32 +15,9 @@ export default function StepTrackerScreen() {
     error,
     toggleTracking,
   } = useLiveStepTracker({
-    onSessionComplete: async ({ steps: sessionSteps, startedAt, endedAt }) => {
-      const currentUser = auth.currentUser;
-
-      if (!currentUser) {
-        Alert.alert('Sign in required', 'Please sign in to save your session.');
-        return;
-      }
-
-      try {
-        const { totalSteps, todaySteps } = await finalizeStepSession(currentUser.uid, {
-          steps: sessionSteps,
-          startedAt,
-          endedAt,
-          type: 'walk',
-        });
-
-        setFinalizedSteps(sessionSteps);
-
-        // Comments explaining previous bug: earlier versions attempted to write on every
-        // pedometer tick, which caused resets when the app restarted. Now we only persist
-        // once per session so totals stay in sync with Firebase after reloads.
-        console.log('Session saved', { sessionSteps, totalSteps, todaySteps });
-      } catch (err) {
-        console.error('Unable to persist session', err);
-        Alert.alert('Save failed', 'We could not save this session. Please try again.');
-      }
+    onSessionComplete: (sessionSteps) => {
+      setFinalizedSteps(sessionSteps);
+      // Persist the finalized count to Firebase for leaderboard consistency.
     },
   });
 
@@ -50,7 +26,7 @@ export default function StepTrackerScreen() {
   const shouldShowWarning = permissionDenied || pedometerUnavailable;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <AppScreen scrollable style={styles.screen} contentStyle={styles.screenContent}>
       <View style={styles.content}>
         <Text style={styles.title}>Live Step Tracker</Text>
         <Text style={styles.subtitle}>Status: {statusLabel}</Text>
@@ -89,18 +65,19 @@ export default function StepTrackerScreen() {
           <Text style={styles.buttonText}>{isTracking ? 'Stop Tracking' : 'Start Walking'}</Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </AppScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
+  screen: {
     backgroundColor: '#f9f9fb',
+  },
+  screenContent: {
+    paddingHorizontal: 24,
   },
   content: {
     flex: 1,
-    paddingHorizontal: 24,
     justifyContent: 'center',
     alignItems: 'center',
     gap: 24,

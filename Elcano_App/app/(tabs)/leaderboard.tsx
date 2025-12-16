@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { auth, db } from '../../firebaseConfig';
 import { collection, limit, onSnapshot, orderBy, query } from 'firebase/firestore';
+import ScreenContainer from '../../components/ScreenContainer';
 
 interface LeaderboardEntry {
   id: string;
@@ -113,39 +114,38 @@ export default function LeaderboardScreen() {
 
   if (isLoading) {
     return (
-      <View style={styles.loadingContainer}> 
-        <ActivityIndicator size="large" color="#FF8C00" />
-        <Text style={styles.loadingText}>Loading leaderboard...</Text>
-      </View>
+      <ScreenContainer scrollable>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#FF8C00" />
+          <Text style={styles.loadingText}>Loading leaderboard...</Text>
+        </View>
+      </ScreenContainer>
     );
   }
 
   return (
-    <View style={styles.container}> 
-      {header}
+    <ScreenContainer scrollable>
+      <View style={styles.container}>
+        {header}
 
-      {entries.length === 0 ? (
-        <View style={styles.emptyState}> 
-          <Ionicons name="trophy-outline" size={48} color="#B0B0B0" />
-          <Text style={styles.emptyTitle}>No results yet</Text>
-          <Text style={styles.emptyCaption}>Start walking and earning to appear on the leaderboard.</Text>
-        </View>
-      ) : (
-        <FlatList
-          data={entries}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-        />
-      )}
-    </View>
+        {entries.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Ionicons name="trophy-outline" size={48} color="#B0B0B0" />
+            <Text style={styles.emptyTitle}>No results yet</Text>
+            <Text style={styles.emptyCaption}>Start walking and earning to appear on the leaderboard.</Text>
+          </View>
+        ) : (
+          <View style={styles.listContent}>
+            {entries.map((entry, index) => renderItem({ item: entry, index }))}
+          </View>
+        )}
+      </View>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, paddingTop: 60, backgroundColor: '#F7F7F7' },
+  container: { paddingTop: 40, gap: 16 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
   title: { fontSize: 26, fontWeight: '700', color: '#1F1F1F' },
   caption: { color: '#6B6B6B', marginTop: 4 },
@@ -161,7 +161,7 @@ const styles = StyleSheet.create({
   toggleButtonActive: { backgroundColor: '#FF8C00' },
   toggleLabel: { marginLeft: 6, fontWeight: '600', color: '#FF8C00' },
   toggleLabelActive: { color: '#fff' },
-  listContent: { paddingBottom: 24 },
+  listContent: { gap: 12, paddingBottom: 24 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -188,7 +188,6 @@ const styles = StyleSheet.create({
   info: { flex: 1 },
   name: { fontSize: 16, fontWeight: '700', color: '#1F1F1F' },
   metric: { color: '#6B6B6B', marginTop: 4 },
-  separator: { height: 12 },
   loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F7F7F7' },
   loadingText: { marginTop: 12, color: '#6B6B6B' },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },

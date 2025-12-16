@@ -14,6 +14,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { signInWithEmail } from "../../firebaseConfig";
 import { AuthStackParamList, RootStackParamList } from "../../navigation/types";
 import { palette, radius, shadow, spacing, typography } from "../../constants/ui";
+import AppScreen from "../../components/AppScreen";
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
@@ -51,65 +52,65 @@ export default function LoginScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <View style={styles.card}>
-        <Text style={styles.title}>Welcome back</Text>
-        <Text style={styles.subtitle}>Log in to keep walking toward your goals.</Text>
+    <AppScreen>
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoider}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <View style={styles.card}>
+          <Text style={styles.title}>Welcome back</Text>
+          <Text style={styles.subtitle}>Log in to keep walking toward your goals.</Text>
 
-        <View style={styles.fieldGroup}>
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            placeholder="you@example.com"
-            style={styles.input}
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-          />
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Email</Text>
+            <TextInput
+              placeholder="you@example.com"
+              style={styles.input}
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Password</Text>
+            <TextInput
+              placeholder="••••••••"
+              style={styles.input}
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+            />
+          </View>
+
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+
+          <TouchableOpacity
+            style={[styles.button, loading && styles.buttonDisabled]}
+            onPress={handleLogin}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.buttonText}>Log In</Text>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => authNavigation.navigate("Register")}>
+            <Text style={styles.link}>Don’t have an account? Sign up</Text>
+          </TouchableOpacity>
         </View>
-
-        <View style={styles.fieldGroup}>
-          <Text style={styles.label}>Password</Text>
-          <TextInput
-            placeholder="••••••••"
-            style={styles.input}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-          />
-        </View>
-
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-
-        <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={handleLogin}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Log In</Text>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={() => authNavigation.navigate("Register")}>
-          <Text style={styles.link}>Don’t have an account? Sign up</Text>
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </AppScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  keyboardAvoider: {
     flex: 1,
-    backgroundColor: palette.background,
     justifyContent: "center",
-    padding: spacing.xxl,
   },
   card: {
     backgroundColor: palette.surface,

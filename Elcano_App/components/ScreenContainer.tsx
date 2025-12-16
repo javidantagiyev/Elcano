@@ -1,6 +1,7 @@
 import React, { ReactNode } from 'react';
-import { ScrollView, StyleSheet, View, ViewStyle } from 'react-native';
-import { palette, spacing } from '../constants/ui';
+import { StyleSheet, ViewStyle } from 'react-native';
+import { spacing } from '../constants/ui';
+import AppScreen from './AppScreen';
 
 interface ScreenContainerProps {
   children: ReactNode;
@@ -13,22 +14,13 @@ interface ScreenContainerProps {
  * Toggle `scrollable` for long content such as dashboards or history lists.
  */
 export default function ScreenContainer({ children, scrollable = false, style }: ScreenContainerProps) {
-  if (scrollable) {
-    return (
-      <ScrollView
-        style={[styles.container, style]}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
-        {children}
-      </ScrollView>
-    );
-  }
-
-  return <View style={[styles.container, styles.content, style]}>{children}</View>;
+  return (
+    <AppScreen scrollable={scrollable} contentStyle={styles.content} style={style}>
+      {children}
+    </AppScreen>
+  );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: palette.background },
   content: { padding: spacing.xl, paddingBottom: spacing.xxl },
 });

@@ -2,36 +2,28 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { NavigationProp, useNavigation } from '@react-navigation/native';
 import { auth, db } from '../../firebaseConfig';
-import {
-  CollectionReference,
-  Timestamp,
-  collection,
-  doc,
-  limit,
-  onSnapshot,
-  orderBy,
-  query,
-  runTransaction,
-  serverTimestamp,
-} from 'firebase/firestore';
+import { CollectionReference, Timestamp, collection, doc, limit, onSnapshot, orderBy, query } from 'firebase/firestore';
 import ScreenContainer from '../../components/ScreenContainer';
 import BalancePill from '../../components/BalancePill';
 import SurfaceCard from '../../components/SurfaceCard';
 import { palette, radius, shadow, spacing, typography } from '../../constants/ui';
+import { redeemOffer } from '../../services/redemptions';
+import { RootStackParamList } from '../../navigation/types';
 
 interface Offer {
   id: string;
   partnerName: string;
   reward: string;
   coinCost: number;
+  logoIcon?: keyof typeof Ionicons.glyphMap;
 }
 
 interface RedemptionEntry {
@@ -47,28 +39,25 @@ const shuffle = <T,>(items: T[]): T[] => [...items].sort(() => Math.random() - 0
 
 const DEMO_OFFERS: Offer[] = [
   {
-    id: 'demo-coffee',
-    partnerName: 'Bean Craft',
-    reward: 'Free cold brew upgrade',
-    coinCost: 25,
-  },
-  {
-    id: 'demo-bike',
-    partnerName: 'Spin Cycle',
-    reward: '50% off first bike rental',
-    coinCost: 30,
-  },
-  {
-    id: 'demo-groceries',
-    partnerName: 'Fresh Fields',
-    reward: '$5 grocery coupon',
+    id: 'demo-cinnabon',
+    partnerName: 'Cinnabon',
+    reward: '10% off any roll',
     coinCost: 20,
+    logoIcon: 'ice-cream-outline',
   },
   {
-    id: 'demo-yoga',
-    partnerName: 'Sunrise Yoga',
-    reward: 'Complimentary drop-in class',
-    coinCost: 15,
+    id: 'demo-divan',
+    partnerName: 'Divan Restaurant',
+    reward: 'Free dessert',
+    coinCost: 25,
+    logoIcon: 'restaurant-outline',
+  },
+  {
+    id: 'demo-paul',
+    partnerName: 'Paul Café',
+    reward: 'Free coffee with breakfast',
+    coinCost: 18,
+    logoIcon: 'cafe-outline',
   },
 ];
 
@@ -88,6 +77,7 @@ const useOffers = () => {
           partnerName: data.partnerName ?? data.company ?? 'Partner',
           reward: data.reward ?? data.discount ?? 'Reward',
           coinCost: data.coinCost ?? data.cost ?? 0,
+          logoIcon: data.logoIcon,
         } as Offer;
       });
 
@@ -131,6 +121,7 @@ export default function OffersScreen() {
   const balance = useUserBalance();
   const [redeemingOfferId, setRedeemingOfferId] = useState<string | null>(null);
   const [redemptions, setRedemptions] = useState<RedemptionEntry[]>([]);
+  const navigation = useNavigation<NavigationProp<RootStackParamList>>();
 
   useEffect(() => {
     const currentUser = auth.currentUser;
@@ -176,50 +167,18 @@ export default function OffersScreen() {
     setRedeemingOfferId(offer.id);
 
     try {
-      if (offer.id.startsWith('demo-')) {
-        setRedemptions((previous) => [
-          {
-            id: `demo-${Date.now()}`,
-            offerId: offer.id,
-            partnerName: offer.partnerName,
-            reward: offer.reward,
-            coinCost: offer.coinCost,
-            redeemedAt: Timestamp.fromDate(new Date()),
-          },
-          ...previous,
-        ]);
-        Alert.alert('Saved as a demo reward', 'This sample offer was added locally. No coins were spent.');
-        return;
-      }
-
-      // Transactions protect against race conditions when multiple redemptions occur at once.
-      await runTransaction(db, async (transaction) => {
-        const userRef = doc(db, 'users', currentUser.uid);
-        const userSnap = await transaction.get(userRef);
-
-        if (!userSnap.exists()) {
-          throw new Error('User profile not found.');
-        }
-
-        const userCoins = userSnap.data().coins ?? 0;
-
-        if (userCoins < offer.coinCost) {
-          throw new Error('INSUFFICIENT_COINS');
-        }
-
-        transaction.update(userRef, { coins: userCoins - offer.coinCost });
-
-        const redemptionRef = doc(redemptionCollection(currentUser.uid));
-        transaction.set(redemptionRef, {
-          offerId: offer.id,
-          partnerName: offer.partnerName,
-          reward: offer.reward,
-          coinCost: offer.coinCost,
-          redeemedAt: serverTimestamp(),
-        });
+      const redemption = await redeemOffer(currentUser.uid, offer.id, offer.coinCost, offer.id.startsWith('demo-'), {
+        partnerName: offer.partnerName,
+        reward: offer.reward,
       });
 
-      Alert.alert('Redeemed', `${offer.reward} from ${offer.partnerName} is now yours!`);
+      navigation.navigate('OfferQR', {
+        offerId: offer.id,
+        partnerName: offer.partnerName,
+        reward: offer.reward,
+        redemptionId: redemption.id,
+        expiresAt: redemption.expiresAt.toMillis(),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to redeem offer right now.';
 
@@ -247,7 +206,7 @@ export default function OffersScreen() {
   }
 
   return (
-    <ScreenContainer>
+    <ScreenContainer scrollable>
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Partner Offers</Text>
@@ -259,25 +218,38 @@ export default function OffersScreen() {
       {offers.length === 0 ? (
         <Text style={styles.placeholder}>New partner rewards will appear here soon.</Text>
       ) : (
-        <FlatList
-          data={offers}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContent}
-          renderItem={({ item }) => {
+        <View style={styles.cardList}>
+          {offers.map((item) => {
             const isRedeeming = redeemingOfferId === item.id;
             const isDemo = item.id.startsWith('demo-');
-            const hasBalance = isDemo ? true : canRedeem(item);
+            const hasBalance = canRedeem(item);
 
             return (
-              <SurfaceCard style={styles.card}>
-                <View style={styles.cardHeader}>
-                  <Text style={styles.partner}>{item.partnerName}</Text>
-                  <View style={styles.costBadge}>
-                    <Ionicons name="logo-bitcoin" size={16} color={palette.primary} />
-                    <Text style={styles.costText}>{item.coinCost}</Text>
+              <SurfaceCard key={item.id} style={styles.card}>
+                <View style={styles.cardContent}>
+                  <View style={styles.cardHeader}>
+                    <View style={styles.partnerMeta}>
+                      <View style={styles.logoBadge}>
+                        <Ionicons
+                          name={item.logoIcon ?? 'gift-outline'}
+                          size={18}
+                          color={palette.primary}
+                        />
+                      </View>
+                      <Text style={styles.partner} numberOfLines={1} ellipsizeMode="tail">
+                        {item.partnerName}
+                      </Text>
+                    </View>
+                    <View style={styles.costBadge}>
+                      <Ionicons name="gift-outline" size={16} color={palette.primary} />
+                      <Text style={styles.costText}>{item.coinCost}</Text>
+                    </View>
                   </View>
+                  <Text style={styles.reward} numberOfLines={2} ellipsizeMode="tail">
+                    {item.reward}
+                  </Text>
                 </View>
-                <Text style={styles.reward}>{item.reward}</Text>
+
                 <TouchableOpacity
                   style={[styles.redeemButton, !hasBalance && styles.redeemButtonDisabled]}
                   onPress={() => handleRedeem(item)}
@@ -293,8 +265,8 @@ export default function OffersScreen() {
                 </TouchableOpacity>
               </SurfaceCard>
             );
-          }}
-        />
+          })}
+        </View>
       )}
 
       <SurfaceCard style={styles.section}>
@@ -332,11 +304,21 @@ const styles = StyleSheet.create({
   subtitle: { color: palette.mutedText, marginTop: spacing.xs },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { marginTop: spacing.md, color: palette.mutedText },
-  listContent: { paddingBottom: spacing.xl },
-  card: { marginBottom: spacing.md },
+  cardList: { gap: spacing.md, marginBottom: spacing.xl },
+  card: { height: 168, justifyContent: 'space-between' },
+  cardContent: { gap: spacing.sm, flex: 1 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm },
+  partnerMeta: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1, marginRight: spacing.md },
+  logoBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.md,
+    backgroundColor: palette.primarySurface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   partner: { fontSize: 18, fontWeight: '700', color: palette.text },
-  reward: { fontSize: 16, color: '#4A4A4A', marginBottom: spacing.md },
+  reward: { fontSize: 16, color: '#4A4A4A' },
   costBadge: {
     flexDirection: 'row',
     alignItems: 'center',

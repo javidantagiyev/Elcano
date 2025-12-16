@@ -16,4 +16,11 @@ export type MainTabParamList = {
 export type RootStackParamList = {
   AuthStack: NavigatorScreenParams<AuthStackParamList>;
   MainTabs: NavigatorScreenParams<MainTabParamList>;
+  OfferQR: {
+    offerId: string;
+    partnerName: string;
+    reward: string;
+    redemptionId: string;
+    expiresAt: number;
+  };
 };

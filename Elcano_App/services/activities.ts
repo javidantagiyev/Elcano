@@ -1,6 +1,7 @@
 import { collection, doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import { STEP_TO_COIN_RATE, calculateCoinDeltaFromSteps } from './coinConversion';
+import { addStepsToDay, buildDateKey } from './dailySteps';
 import { fetchUserProfile, updateUserProgress } from './userProfile';
 
 type ActivityType = 'walk' | 'run' | 'bike' | 'other';
@@ -15,12 +16,15 @@ export interface ActivityLogInput {
 
 const activityCollection = (uid: string) => collection(doc(db, 'users', uid), 'activities');
 
-export const logActivity = async (uid: string, activity: ActivityLogInput): Promise<void> => {
+export const logActivity = async (
+  uid: string,
+  activity: ActivityLogInput,
+): Promise<{ coinsEarned: number; dateKey: string }> => {
   const profile = await fetchUserProfile(uid);
   const previousSteps = profile?.totalSteps ?? 0;
   const nextSteps = previousSteps + activity.steps;
   const coinsEarned = calculateCoinDeltaFromSteps(previousSteps, nextSteps, STEP_TO_COIN_RATE);
-  const dateKey = new Date().toISOString().split('T')[0];
+  const dateKey = buildDateKey();
 
   const activityDoc = doc(activityCollection(uid));
   await setDoc(activityDoc, {
@@ -36,8 +40,13 @@ export const logActivity = async (uid: string, activity: ActivityLogInput): Prom
     coinsEarned,
   });
 
-  await updateUserProgress(uid, {
-    totalStepsDelta: activity.steps,
-    coinsDelta: coinsEarned,
-  });
+  await Promise.all([
+    updateUserProgress(uid, {
+      totalStepsDelta: activity.steps,
+      coinsDelta: coinsEarned,
+    }),
+    addStepsToDay(uid, dateKey, activity.steps),
+  ]);
+
+  return { coinsEarned, dateKey };
 };

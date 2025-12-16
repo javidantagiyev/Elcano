@@ -13,6 +13,7 @@ import AchievementsScreen from "../app/(tabs)/achievements";
 import LeaderboardScreen from "../app/(tabs)/leaderboard";
 import ProfileScreen from "../app/(tabs)/profile";
 import { auth } from "../firebaseConfig";
+import OfferQRCodeScreen from "../screens/OfferQRCodeScreen";
 import {
   AuthStackParamList,
   MainTabParamList,
@@ -119,7 +120,14 @@ export default function AppNavigator() {
   return (
     <RootStack.Navigator screenOptions={{ headerShown: false }}>
       {isAuthenticated ? (
-        <RootStack.Screen name="MainTabs" component={MainTabs} />
+        <>
+          <RootStack.Screen name="MainTabs" component={MainTabs} />
+          <RootStack.Screen
+            name="OfferQR"
+            component={OfferQRCodeScreen}
+            options={{ headerShown: true, title: "Redeem offer" }}
+          />
+        </>
       ) : (
         <RootStack.Screen name="AuthStack" component={AuthStackNavigator} />
       )}

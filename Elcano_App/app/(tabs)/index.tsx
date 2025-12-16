@@ -2,15 +2,59 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { auth, db } from '../../firebaseConfig';
-import { doc, onSnapshot } from 'firebase/firestore';
+import {
+  Timestamp,
+  collection,
+  doc,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+} from 'firebase/firestore';
 import ScreenContainer from '../../components/ScreenContainer';
 import BalancePill from '../../components/BalancePill';
 import SurfaceCard from '../../components/SurfaceCard';
 import { palette, radius, shadow, spacing, typography } from '../../constants/ui';
+import { logActivity } from '../../services/activities';
+import { addStepsToDay, buildDateKey } from '../../services/dailySteps';
+import { checkAchievements } from '../../services/achievements';
+import { updateUserProgress } from '../../services/userProfile';
 import useLiveStepTracker from '../../hooks/useLiveStepTracker';
-import { finalizeStepSession, subscribeToActivityHistory } from '../../services/stepTracking';
 
-const StatCard = ({ label, value, icon, accentColor }) => (
+interface UserStats {
+  name?: string;
+  totalSteps: number;
+  coins: number;
+}
+
+interface ActivityEntry {
+  id: string;
+  dateKey: string;
+  steps: number;
+  coinsEarned?: number;
+  type?: string;
+}
+
+interface QuickActivity {
+  id: string;
+  label: string;
+  type: 'walk' | 'run' | 'bike';
+  durationMinutes: number;
+  estimatedSteps: number;
+  distanceKm: number;
+}
+
+const StatCard = ({
+  label,
+  value,
+  icon,
+  accentColor,
+}: {
+  label: string;
+  value: string | number;
+  icon: keyof typeof Ionicons.glyphMap;
+  accentColor: string;
+}) => (
   <SurfaceCard style={styles.card}>
     <View style={[styles.iconBadge, { backgroundColor: accentColor }]}>
       <Ionicons name={icon} size={20} color="#fff" />
@@ -20,97 +64,122 @@ const StatCard = ({ label, value, icon, accentColor }) => (
   </SurfaceCard>
 );
 
-const formatDateLabel = (dateKey) => {
+const formatDateKey = (value: unknown): string => {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (value instanceof Timestamp) {
+    return value.toDate().toISOString().split('T')[0];
+  }
+
+  return '';
+};
+
+const formatDateLabel = (dateKey: string): string => {
   const [year, month, day] = dateKey.split('-').map(Number);
   const parsedDate = new Date(year, (month ?? 1) - 1, day ?? 1);
   return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' }).format(parsedDate);
 };
 
 export default function Dashboard() {
-  const [stats, setStats] = useState({ name: null, coins: null, totalSteps: null });
-  const [todaySteps, setTodaySteps] = useState(null);
-  const [history, setHistory] = useState([]);
-  const [loggingActivityId, setLoggingActivityId] = useState(null);
-  const todayKey = useMemo(() => new Date().toISOString().split('T')[0], []);
-
+  const [stats, setStats] = useState<UserStats>({ coins: 0, totalSteps: 0 });
+  const [history, setHistory] = useState<ActivityEntry[]>([]);
+  const [todaySteps, setTodaySteps] = useState(0);
+  const [loggingActivityId, setLoggingActivityId] = useState<string | null>(null);
+  const [isSavingSession, setIsSavingSession] = useState(false);
   const {
     steps: sessionSteps,
-    isTracking,
+    isTracking: isTrackingSession,
     permissionStatus,
     isPedometerAvailable,
+    error: trackerError,
     startTracking,
     stopTracking,
-  } = useLiveStepTracker({
-    onSessionComplete: async ({ steps, startedAt, endedAt }) => {
-      const currentUser = auth.currentUser;
+  } = useLiveStepTracker();
 
-      if (!currentUser) {
-        Alert.alert('Sign in required', 'Please sign in to save your session.');
-        return;
-      }
-
-      try {
-        await finalizeStepSession(currentUser.uid, { steps, startedAt, endedAt, type: 'walk' });
-      } catch (err) {
-        console.error('Unable to persist session', err);
-        Alert.alert('Save failed', 'We could not save this session. Please try again.');
-      }
-    },
-  });
+  const todayKey = useMemo(() => buildDateKey(), []);
 
   useEffect(() => {
     const currentUser = auth.currentUser;
 
     if (!currentUser) {
-      return undefined;
+      return;
     }
 
+    // Live subscriptions keep the dashboard fresh without manual refresh buttons.
     const profileRef = doc(db, 'users', currentUser.uid);
-    const dailyRef = doc(db, 'dailySteps', currentUser.uid, 'entries', todayKey);
+    const todayStepsRef = doc(db, 'dailySteps', currentUser.uid, 'days', todayKey);
+    const historyQuery = query(
+      collection(profileRef, 'activities'),
+      orderBy('date', 'desc'),
+      limit(7)
+    );
 
     const unsubscribeProfile = onSnapshot(profileRef, (snapshot) => {
       const data = snapshot.data();
+
       if (!data) {
-        // We avoid defaulting to zero because Firebase is the source of truth.
-        setStats({ name: null, coins: null, totalSteps: null });
+        setStats({ coins: 0, totalSteps: 0 });
         return;
       }
 
       setStats({
-        name: data.name ?? null,
-        coins: typeof data.coins === 'number' ? data.coins : 0,
-        totalSteps: typeof data.totalSteps === 'number' ? data.totalSteps : 0,
+        name: data.name,
+        coins: data.coins ?? 0,
+        totalSteps: data.totalSteps ?? 0,
       });
     });
 
-    const unsubscribeToday = onSnapshot(dailyRef, (snapshot) => {
-      if (!snapshot.exists()) {
-        setTodaySteps(null);
-        return;
-      }
-
+    const unsubscribeTodaySteps = onSnapshot(todayStepsRef, (snapshot) => {
       const data = snapshot.data();
-      setTodaySteps(typeof data.steps === 'number' ? data.steps : 0);
+      setTodaySteps(data?.steps ?? 0);
     });
 
-    const unsubscribeHistory = subscribeToActivityHistory(currentUser.uid, (entries) => {
-      setHistory(
-        entries.map((entry) => ({
-          ...entry,
-          steps: entry.steps ?? 0,
-          dateKey: entry.dateKey ?? todayKey,
-        })),
-      );
+    const unsubscribeHistory = onSnapshot(historyQuery, (snap) => {
+      const entries = snap.docs
+        .map((docSnapshot) => {
+          const data = docSnapshot.data();
+          const dateKey = formatDateKey(data.date);
+
+          if (!dateKey) {
+            return null;
+          }
+
+          return {
+            id: docSnapshot.id,
+            dateKey,
+            steps: data.steps ?? 0,
+            coinsEarned: data.coinsEarned ?? data.coins ?? 0,
+          } as ActivityEntry;
+        })
+        .filter(Boolean) as ActivityEntry[];
+
+      setHistory(entries);
     });
 
     return () => {
       unsubscribeProfile();
-      unsubscribeToday();
+      unsubscribeTodaySteps();
       unsubscribeHistory();
     };
   }, [todayKey]);
 
-  const quickActivities = useMemo(
+  useEffect(() => {
+    const currentUser = auth.currentUser;
+
+    if (!currentUser) {
+      return;
+    }
+
+    void checkAchievements(currentUser.uid, {
+      totalSteps: stats.totalSteps,
+      todaySteps,
+      activitiesLogged: history.length,
+    });
+  }, [history.length, stats.totalSteps, todaySteps]);
+
+  const quickActivities: QuickActivity[] = useMemo(
     () => [
       {
         id: 'walk-20',
@@ -141,6 +210,13 @@ export default function Dashboard() {
   );
 
   const handleStartStepTracking = async () => {
+    const currentUser = auth.currentUser;
+
+    if (!currentUser) {
+      Alert.alert('Sign in required', 'Please sign in to track your activities.');
+      return;
+    }
+
     if (permissionStatus === 'denied') {
       Alert.alert('Motion access needed', 'Enable motion access to start live step tracking.');
       return;
@@ -152,13 +228,46 @@ export default function Dashboard() {
     }
 
     await startTracking();
+    Alert.alert('Tracking started', 'Keep the app open while we count your steps.');
   };
 
   const handleStopStepTracking = async () => {
-    await stopTracking();
+    if (!isTrackingSession) {
+      return;
+    }
+
+    const currentUser = auth.currentUser;
+    const previousStats = { ...stats };
+    const previousTodaySteps = todaySteps;
+
+    setIsSavingSession(true);
+
+    try {
+      const finalizedSteps = await stopTracking();
+      const sessionDelta = finalizedSteps ?? 0;
+
+      if (currentUser && sessionDelta > 0) {
+        setTodaySteps((current) => current + sessionDelta);
+        setStats((current) => ({ ...current, totalSteps: current.totalSteps + sessionDelta }));
+
+        await Promise.all([
+          addStepsToDay(currentUser.uid, todayKey, sessionDelta),
+          updateUserProgress(currentUser.uid, { totalStepsDelta: sessionDelta }),
+        ]);
+      }
+
+      Alert.alert('Tracking stopped', `You tracked ${sessionDelta} steps this session.`);
+    } catch (error) {
+      console.error('Unable to save session steps', error);
+      setTodaySteps(previousTodaySteps);
+      setStats(previousStats);
+      Alert.alert('Sync failed', 'We could not sync your session steps. Please try again.');
+    } finally {
+      setIsSavingSession(false);
+    }
   };
 
-  const handleStartActivity = async (activity) => {
+  const handleStartActivity = async (activity: QuickActivity) => {
     const currentUser = auth.currentUser;
 
     if (!currentUser) {
@@ -169,12 +278,20 @@ export default function Dashboard() {
     setLoggingActivityId(activity.id);
 
     try {
-      await finalizeStepSession(currentUser.uid, {
-        steps: activity.estimatedSteps,
-        startedAt: new Date(),
-        endedAt: new Date(),
+      const { coinsEarned } = await logActivity(currentUser.uid, {
+        title: `${activity.label} (quick add)`,
         type: activity.type,
+        steps: activity.estimatedSteps,
+        durationMinutes: activity.durationMinutes,
+        distanceKm: activity.distanceKm,
       });
+
+      setTodaySteps((current) => current + activity.estimatedSteps);
+      setStats((current) => ({
+        ...current,
+        totalSteps: current.totalSteps + activity.estimatedSteps,
+        coins: current.coins + coinsEarned,
+      }));
       Alert.alert('Activity saved', `${activity.label} logged for today.`);
     } catch (error) {
       console.error('Unable to log activity', error);
@@ -191,7 +308,7 @@ export default function Dashboard() {
           <Text style={styles.title}>Dashboard</Text>
           <Text style={styles.subtitle}>Welcome back{stats.name ? `, ${stats.name}` : ''}.</Text>
         </View>
-        <BalancePill amount={stats.coins ?? '—'} />
+        <BalancePill amount={stats.coins} />
       </View>
 
       <SurfaceCard style={styles.section}>
@@ -206,45 +323,36 @@ export default function Dashboard() {
 
         <View style={styles.trackerRow}>
           <View style={styles.trackerCopy}>
-            <Text style={styles.trackerLabel}>{isTracking ? 'Session steps' : 'Ready to start'}</Text>
-            <Text style={styles.trackerValue}>{isTracking ? sessionSteps : '—'}</Text>
-            <Text style={styles.trackerSubtext}>Totals save when you stop a session.</Text>
+            <Text style={styles.trackerLabel}>{isTrackingSession ? 'Session steps' : 'Ready to start'}</Text>
+            <Text style={styles.trackerValue}>{isTrackingSession ? sessionSteps : '0'}</Text>
+            {trackerError ? <Text style={styles.trackerError}>{trackerError}</Text> : null}
           </View>
           <TouchableOpacity
-            style={[styles.trackerButton, isTracking ? styles.trackerButtonStop : styles.trackerButtonStart]}
-            onPress={isTracking ? handleStopStepTracking : handleStartStepTracking}
+            style={[styles.trackerButton, isTrackingSession ? styles.trackerButtonStop : styles.trackerButtonStart]}
+            onPress={isTrackingSession ? handleStopStepTracking : handleStartStepTracking}
+            disabled={isSavingSession}
           >
             <Ionicons
-              name={isTracking ? 'stop-circle-outline' : 'play-circle-outline'}
+              name={isTrackingSession ? 'stop-circle-outline' : 'play-circle-outline'}
               size={20}
-              color={isTracking ? '#fff' : '#fff'}
+              color={isTrackingSession ? '#fff' : '#fff'}
             />
             <Text style={styles.trackerButtonText}>
-              {isTracking ? 'Stop tracking' : 'Start tracking'}
+              {isSavingSession ? 'Saving...' : isTrackingSession ? 'Stop tracking' : 'Start tracking'}
             </Text>
           </TouchableOpacity>
         </View>
       </SurfaceCard>
 
       <View style={styles.statRow}>
-        <StatCard
-          label="Today's steps"
-          value={todaySteps ?? '—'}
-          icon="walk-outline"
-          accentColor={palette.primary}
-        />
-        <StatCard
-          label="Total steps"
-          value={stats.totalSteps ?? '—'}
-          icon="analytics-outline"
-          accentColor={palette.accent}
-        />
+        <StatCard label="Today's steps" value={todaySteps} icon="walk-outline" accentColor={palette.primary} />
+        <StatCard label="Total steps" value={stats.totalSteps} icon="analytics-outline" accentColor={palette.accent} />
       </View>
 
       <SurfaceCard style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Activity history</Text>
-          <Text style={styles.sectionCaption}>Last 7 sessions</Text>
+          <Text style={styles.sectionCaption}>Last 7 days</Text>
         </View>
 
         {history.length === 0 ? (
@@ -286,18 +394,25 @@ export default function Dashboard() {
                 onPress={() => handleStartActivity(activity)}
                 disabled={isLogging}
               >
-                <View style={styles.quickHeader}>
-                  <Ionicons
-                    name={activity.type === 'bike' ? 'bicycle-outline' : activity.type === 'run' ? 'flame-outline' : 'walk-outline'}
-                    size={20}
-                    color={palette.primary}
-                  />
-                  <Text style={styles.quickTitle}>{activity.label}</Text>
+                <View style={styles.quickCopy}>
+                  <View style={styles.quickHeader}>
+                    <Ionicons
+                      name={activity.type === 'bike' ? 'bicycle-outline' : activity.type === 'run' ? 'flame-outline' : 'walk-outline'}
+                      size={20}
+                      color={palette.primary}
+                    />
+                    <Text style={styles.quickTitle} numberOfLines={1} ellipsizeMode="tail">
+                      {activity.label}
+                    </Text>
+                  </View>
+                  <Text style={styles.quickMeta} numberOfLines={2} ellipsizeMode="tail">
+                    {activity.durationMinutes} min · {activity.distanceKm} km · ~{activity.estimatedSteps.toLocaleString()} steps
+                  </Text>
                 </View>
-                <Text style={styles.quickMeta}>
-                  {activity.durationMinutes} min · {activity.distanceKm} km · ~{activity.estimatedSteps.toLocaleString()} steps
+
+                <Text style={styles.quickAction} numberOfLines={1}>
+                  {isLogging ? 'Saving...' : 'Start & log'}
                 </Text>
-                <Text style={styles.quickAction}>{isLogging ? 'Saving...' : 'Start & log'}</Text>
               </TouchableOpacity>
             );
           })}
@@ -306,6 +421,7 @@ export default function Dashboard() {
     </ScreenContainer>
   );
 }
+
 
 const styles = StyleSheet.create({
   header: {
@@ -348,6 +464,7 @@ const styles = StyleSheet.create({
   trackerCopy: { flex: 1, gap: spacing.xs },
   trackerLabel: { color: palette.mutedText, fontSize: 13 },
   trackerValue: { fontSize: 32, fontWeight: '800', color: palette.text },
+  trackerError: { color: palette.danger, fontSize: 12 },
   trackerSubtext: { color: palette.mutedText, fontSize: 12 },
   trackerButton: {
     flexDirection: 'row',
@@ -379,11 +496,15 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     borderRadius: radius.md,
     padding: spacing.md,
-    gap: spacing.xs,
+    gap: spacing.sm,
+    height: 144,
+    justifyContent: 'space-between',
+    backgroundColor: palette.surface,
   },
   quickCardDisabled: { opacity: 0.6 },
+  quickCopy: { gap: spacing.xs },
   quickHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   quickTitle: { fontWeight: '700', color: palette.text },
-  quickMeta: { color: palette.mutedText, fontSize: 12 },
+  quickMeta: { color: palette.mutedText, fontSize: 12, lineHeight: 18 },
   quickAction: { color: palette.primary, fontWeight: '700', marginTop: spacing.xs },
 });

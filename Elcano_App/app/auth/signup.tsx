@@ -15,6 +15,7 @@ import { createUserProfile } from "../../services/userProfile";
 import { signUpWithEmail } from "../../firebaseConfig";
 import { AuthStackParamList, RootStackParamList } from "../../navigation/types";
 import { palette, radius, shadow, spacing, typography } from "../../constants/ui";
+import AppScreen from "../../components/AppScreen";
 
 export default function SignupScreen() {
   const [name, setName] = useState("");
@@ -70,86 +71,86 @@ export default function SignupScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <View style={styles.card}>
-        <Text style={styles.title}>Create your account</Text>
-        <Text style={styles.subtitle}>We just need a few details to get started.</Text>
+    <AppScreen>
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoider}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <View style={styles.card}>
+          <Text style={styles.title}>Create your account</Text>
+          <Text style={styles.subtitle}>We just need a few details to get started.</Text>
 
-        <View style={styles.fieldGroup}>
-          <Text style={styles.label}>Full name</Text>
-          <TextInput
-            placeholder="Alex Walker"
-            style={styles.input}
-            value={name}
-            onChangeText={setName}
-          />
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Full name</Text>
+            <TextInput
+              placeholder="Alex Walker"
+              style={styles.input}
+              value={name}
+              onChangeText={setName}
+            />
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Age</Text>
+            <TextInput
+              placeholder="18"
+              style={styles.input}
+              value={age}
+              onChangeText={setAge}
+              keyboardType="numeric"
+            />
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Email</Text>
+            <TextInput
+              placeholder="you@example.com"
+              style={styles.input}
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Password</Text>
+            <TextInput
+              placeholder="••••••••"
+              style={styles.input}
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+            />
+          </View>
+
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+
+          <TouchableOpacity
+            style={[styles.button, loading && styles.buttonDisabled]}
+            onPress={handleSignup}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.buttonText}>Sign Up</Text>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => authNavigation.goBack()}>
+            <Text style={styles.link}>Already have an account? Log in</Text>
+          </TouchableOpacity>
         </View>
-
-        <View style={styles.fieldGroup}>
-          <Text style={styles.label}>Age</Text>
-          <TextInput
-            placeholder="18"
-            style={styles.input}
-            value={age}
-            onChangeText={setAge}
-            keyboardType="numeric"
-          />
-        </View>
-
-        <View style={styles.fieldGroup}>
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            placeholder="you@example.com"
-            style={styles.input}
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-          />
-        </View>
-
-        <View style={styles.fieldGroup}>
-          <Text style={styles.label}>Password</Text>
-          <TextInput
-            placeholder="••••••••"
-            style={styles.input}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-          />
-        </View>
-
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-
-        <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={handleSignup}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Sign Up</Text>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={() => authNavigation.goBack()}>
-          <Text style={styles.link}>Already have an account? Log in</Text>
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </AppScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  keyboardAvoider: {
     flex: 1,
-    backgroundColor: palette.background,
     justifyContent: "center",
-    padding: spacing.xxl,
   },
   card: {
     backgroundColor: palette.surface,
